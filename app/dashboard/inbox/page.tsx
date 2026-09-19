@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { Search, MoreVertical, Send, Phone, Mail, MessageCircle, Globe } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import SetupRequired from '@/components/SetupRequired';
 
 type Customer = {
   id: string;
@@ -32,30 +33,44 @@ export default function Inbox() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [setupRequired, setSetupRequired] = useState(false);
 
   // 1. Fetch Conversations
   useEffect(() => {
     const fetchConversations = async () => {
-      const { data, error } = await supabase
-        .from('conversations')
-        .select(`
-          id,
-          channel,
-          customer_id,
-          customers (
+      try {
+        const { data, error } = await supabase
+          .from('conversations')
+          .select(`
             id,
-            name
-          )
-        `)
-        .eq('business_id', BUSINESS_ID)
-        .order('last_contact', { ascending: false });
-        
-      if (data) {
-        // @ts-ignore - Supabase types are tricky with joins without generated types
-        setConversations(data as Conversation[]);
-        if (data.length > 0 && !activeConversationId) {
-          setActiveConversationId(data[0].id);
+            channel,
+            customer_id,
+            customers (
+              id,
+              name
+            )
+          `)
+          .eq('business_id', BUSINESS_ID)
+          .order('last_contact', { ascending: false });
+          
+        if (error) {
+          if (error.code === '42P01' || error.message?.includes("Could not find the table")) {
+            setSetupRequired(true);
+            return;
+          }
+          console.error("Error fetching conversations:", error);
+          return;
         }
+
+        if (data) {
+          // @ts-ignore - Supabase types are tricky with joins without generated types
+          setConversations(data as Conversation[]);
+          if (data.length > 0 && !activeConversationId) {
+            setActiveConversationId(data[0].id);
+          }
+        }
+      } catch (err) {
+        console.error("Unexpected error:", err);
       }
     };
 
@@ -132,6 +147,10 @@ export default function Inbox() {
       default: return <MessageCircle className="w-4 h-4 text-gray-500" />;
     }
   };
+
+  if (setupRequired) {
+    return <SetupRequired />;
+  }
 
   return (
     <div className="flex-1 flex overflow-hidden">

@@ -1,10 +1,62 @@
+'use client';
+
 import { BarChart, MessageSquare, Users, UserPlus } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import SetupRequired from '@/components/SetupRequired';
+
+const BUSINESS_ID = 'd1b7d59b-134e-4f10-8646-6b2c2eb949b2'; // Demo Business
 
 export default function DashboardOverview() {
+  const [setupRequired, setSetupRequired] = useState(false);
+  const [counts, setCounts] = useState({
+    conversations: 0,
+    leads: 0,
+    customers: 0
+  });
+  const [loading, setLoading] = useState(true);
+  
+  const supabase = createClient();
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const [convRes, leadsRes, custRes] = await Promise.all([
+          supabase.from('conversations').select('id', { count: 'exact', head: true }).eq('business_id', BUSINESS_ID),
+          supabase.from('leads').select('id', { count: 'exact', head: true }).eq('business_id', BUSINESS_ID),
+          supabase.from('customers').select('id', { count: 'exact', head: true }).eq('business_id', BUSINESS_ID),
+        ]);
+
+        if (convRes.error) {
+          if (convRes.error.code === '42P01' || convRes.error.message?.includes("Could not find the table")) {
+            setSetupRequired(true);
+            return;
+          }
+        }
+
+        setCounts({
+          conversations: convRes.count || 0,
+          leads: leadsRes.count || 0,
+          customers: custRes.count || 0,
+        });
+      } catch (err) {
+        console.error(err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchStats();
+  }, [supabase]);
+
+  if (setupRequired) {
+    return <SetupRequired />;
+  }
+
   const stats = [
-    { name: 'Total Conversations', value: '428', change: '+12%', icon: MessageSquare, color: 'text-blue-400', bg: 'bg-blue-500/10' },
-    { name: 'New Leads', value: '96', change: '+18%', icon: UserPlus, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
-    { name: 'Active Customers', value: '19', change: '+4%', icon: Users, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
+    { name: 'Total Conversations', value: loading ? '-' : counts.conversations.toString(), change: '+12%', icon: MessageSquare, color: 'text-blue-400', bg: 'bg-blue-500/10' },
+    { name: 'Total Leads', value: loading ? '-' : counts.leads.toString(), change: '+18%', icon: UserPlus, color: 'text-indigo-400', bg: 'bg-indigo-500/10' },
+    { name: 'Total Customers', value: loading ? '-' : counts.customers.toString(), change: '+4%', icon: Users, color: 'text-emerald-400', bg: 'bg-emerald-500/10' },
     { name: 'AI Handling Rate', value: '71%', change: '+5%', icon: BarChart, color: 'text-purple-400', bg: 'bg-purple-500/10' },
   ];
 

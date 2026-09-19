@@ -9,7 +9,8 @@ import {
   Zap, 
   Settings, 
   LayoutDashboard,
-  LogOut
+  LogOut,
+  Plug
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Overview', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Inbox', href: '/dashboard/inbox', icon: Inbox },
   { name: 'CRM & Leads', href: '/dashboard/crm', icon: Users },
+  { name: 'Integrations', href: '/dashboard/integrations', icon: Plug },
   { name: 'Knowledge Base', href: '/dashboard/knowledge', icon: Brain },
   { name: 'Automation', href: '/dashboard/automation', icon: Zap },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
