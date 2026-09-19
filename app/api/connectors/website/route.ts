@@ -68,8 +68,44 @@ export async function POST(req: Request) {
 
     if (messageError) throw messageError;
 
-    // 4. Mock AI Response (Since we don't have Gemini Key yet)
-    const aiResponseText = "Hi there! I am connected to the real database now, but my AI brain is still being mocked. I've saved your message to Supabase!";
+    // 4. Connect to Gemini AI
+    let aiResponseText = "Hi there! I am connected to the real database now, but my AI brain is still being mocked. I've saved your message to Supabase!";
+
+    if (process.env.GEMINI_API_KEY) {
+      try {
+        const { GoogleGenAI } = await import('@google/genai');
+        const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+        
+        // Fetch previous conversation history for context (optional but good)
+        const { data: previousMessages } = await supabase
+          .from('messages')
+          .select('sender_type, content')
+          .eq('conversation_id', conversation.id)
+          .order('created_at', { ascending: true })
+          .limit(10);
+          
+        let historyPrompt = "";
+        if (previousMessages && previousMessages.length > 0) {
+          historyPrompt = "Here is the conversation history so far:\n" + 
+            previousMessages.map(m => `${m.sender_type === 'ai' ? 'Assistant' : 'Customer'}: ${m.content}`).join('\n') + 
+            "\n\n";
+        }
+        
+        const systemPrompt = "You are a helpful AI assistant for a business. Be polite, concise, and helpful. " + historyPrompt;
+        
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: systemPrompt + "Customer says: " + message,
+        });
+        
+        if (response.text) {
+          aiResponseText = response.text;
+        }
+      } catch (aiError) {
+        console.error("Gemini AI Error:", aiError);
+        aiResponseText = "I'm having trouble connecting to my AI brain right now, but I received your message!";
+      }
+    }
 
     // 5. Save AI Message
     await supabase
