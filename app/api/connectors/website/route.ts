@@ -83,18 +83,29 @@ export async function POST(req: Request) {
         content: message,
       });
 
-    // 5. Generate Real AI Response
-    let aiResponseText = "Hi there! I am the OMNI AI Engine. I've received your message and saved it directly to the Supabase database. A human agent will get back to you shortly!";
+    // 5. Generate Real AI Response using Gemini + Knowledge Base
+    let aiResponseText = "Hi there! I am the OMNI AI Engine. I've received your message. A human agent will get back to you shortly!";
     
     try {
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         console.warn("Missing GEMINI_API_KEY. Falling back to mock response.");
       } else {
+        // Fetch knowledge base for this business to inject into system prompt
+        const { data: knowledgeDocs } = await supabase
+          .from('knowledge_base')
+          .select('content')
+          .eq('business_id', businessId)
+          .limit(20);
+
+        const knowledgeContext = knowledgeDocs && knowledgeDocs.length > 0
+          ? `\n\n---\nBUSINESS KNOWLEDGE BASE:\n${knowledgeDocs.map((d: any) => `- ${d.content}`).join('\n')}\n---\n`
+          : '';
+
         const aiClient = new GoogleGenAI({ apiKey });
         const interaction = await aiClient.interactions.create({
             model: "gemini-3.7-flash",
-            system_instruction: "You are the helpful AI assistant for OMNI AI customer support. Provide concise, friendly, and helpful answers to the website visitor. Use the provided chat history to inform your responses.",
+            system_instruction: `You are the helpful AI customer support assistant for this business. Be concise, friendly, and professional. Use the conversation history and business knowledge base below to give accurate, relevant answers.${knowledgeContext}`,
             input: chatContext,
         });
         
@@ -104,7 +115,6 @@ export async function POST(req: Request) {
       }
     } catch (aiError) {
       console.error('Error generating AI response:', aiError);
-      // Fallback remains the mock string if Gemini fails
     }
 
     // 6. Save AI Message
