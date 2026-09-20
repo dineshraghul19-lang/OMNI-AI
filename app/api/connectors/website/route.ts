@@ -88,8 +88,8 @@ export async function POST(req: Request) {
     
     try {
       const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey || !apiKey.startsWith('AIzaSy')) {
-        console.warn("Invalid or missing GEMINI_API_KEY. Falling back to mock response.");
+      if (!apiKey) {
+        console.warn("Missing GEMINI_API_KEY. Falling back to mock response.");
       } else {
         const aiClient = new GoogleGenAI({ apiKey });
         const interaction = await aiClient.interactions.create({
