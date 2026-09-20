@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { GoogleGenAI } from '@google/genai';
 import * as cheerio from 'cheerio';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 
 function chunkText(text: string, maxChunkSize: number = 1000): string[] {
   const chunks: string[] = [];
@@ -65,8 +65,10 @@ export async function POST(req: Request) {
       sourceName = file.name;
       const arrayBuffer = await file.arrayBuffer();
       const buffer = Buffer.from(arrayBuffer);
-      const data = await pdfParse(buffer);
-      extractedText = data.text.replace(/\s+/g, ' ').trim();
+      const parser = new PDFParse({ data: buffer });
+      const result = await parser.getText();
+      await parser.destroy();
+      extractedText = result.text.replace(/\s+/g, ' ').trim();
     } else {
       return NextResponse.json({ error: 'Invalid type' }, { status: 400 });
     }
