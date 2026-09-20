@@ -1,7 +1,7 @@
 'use client';
 
-import { FileText, Link as LinkIcon, Plus, Trash2, CheckCircle2 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { FileText, Link as LinkIcon, Plus, Trash2, CheckCircle2, UploadCloud } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import SetupRequired from '@/components/SetupRequired';
 
@@ -10,6 +10,8 @@ const BUSINESS_ID = 'd1b7d59b-134e-4f10-8646-6b2c2eb949b2'; // Demo Business
 type KnowledgeDocument = {
   id: string;
   content: string;
+  source_type: string;
+  source_name: string;
   created_at: string;
 };
 
@@ -18,65 +20,86 @@ export default function KnowledgeBase() {
   const [setupRequired, setSetupRequired] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [uploadType, setUploadType] = useState<'text' | 'url' | 'pdf'>('text');
+  
   const [newContent, setNewContent] = useState('');
+  const [file, setFile] = useState<File | null>(null);
   const [adding, setAdding] = useState(false);
   
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const supabase = createClient();
 
   useEffect(() => {
-    const fetchDocs = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('knowledge_base')
-          .select('*')
-          .eq('business_id', BUSINESS_ID)
-          .order('created_at', { ascending: false });
+    fetchDocs();
+  }, []);
 
-        if (error) {
-          if (error.code === '42P01' || error.message?.includes("Could not find the table")) {
-            setSetupRequired(true);
-            return;
-          }
-          console.error("Error fetching knowledge base:", error);
-          setLoading(false);
+  const fetchDocs = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('knowledge_base')
+        .select('*')
+        .eq('business_id', BUSINESS_ID)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        if (error.code === '42P01' || error.message?.includes("Could not find the table") || error.message?.includes("does not exist")) {
+          setSetupRequired(true);
           return;
         }
-
-        if (data) {
-          setDocuments(data as KnowledgeDocument[]);
-        }
-      } catch (err) {
-        console.error(err);
-      } finally {
+        console.error("Error fetching knowledge base:", error);
         setLoading(false);
+        return;
       }
-    };
 
-    fetchDocs();
-  }, [supabase]);
+      if (data) {
+        setDocuments(data as KnowledgeDocument[]);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleAdd = async () => {
-    if (!newContent.trim()) return;
+    if (uploadType === 'text' && !newContent.trim()) return;
+    if (uploadType === 'url' && !newContent.trim()) return;
+    if (uploadType === 'pdf' && !file) return;
+
     setAdding(true);
     
-    // Insert into Supabase
-    const { data, error } = await supabase
-      .from('knowledge_base')
-      .insert({
-        business_id: BUSINESS_ID,
-        content: newContent
-      })
-      .select()
-      .single();
+    try {
+      const formData = new FormData();
+      formData.append('businessId', BUSINESS_ID);
+      formData.append('type', uploadType);
       
-    if (!error && data) {
-      setDocuments([data as KnowledgeDocument, ...documents]);
+      if (uploadType === 'pdf' && file) {
+        formData.append('file', file);
+      } else {
+        formData.append('content', newContent);
+      }
+
+      const response = await fetch('/api/knowledge/ingest', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to ingest knowledge');
+      }
+
+      await fetchDocs();
       setShowAddModal(false);
       setNewContent('');
-    } else {
+      setFile(null);
+    } catch (error: any) {
       console.error(error);
+      alert(error.message);
+    } finally {
+      setAdding(false);
     }
-    setAdding(false);
   };
 
   const handleDelete = async (id: string) => {
@@ -88,6 +111,13 @@ export default function KnowledgeBase() {
     return <SetupRequired />;
   }
 
+  const openModal = (type: 'text' | 'url' | 'pdf') => {
+    setUploadType(type);
+    setNewContent('');
+    setFile(null);
+    setShowAddModal(true);
+  };
+
   return (
     <div className="flex-1 overflow-y-auto p-8">
       <div className="max-w-5xl mx-auto space-y-8">
@@ -97,7 +127,7 @@ export default function KnowledgeBase() {
             <p className="text-gray-400 mt-1">Train your AI with your business knowledge, menus, policies, and FAQs.</p>
           </div>
           <button 
-            onClick={() => setShowAddModal(true)}
+            onClick={() => openModal('text')}
             className="flex items-center gap-2 px-4 py-2 bg-indigo-600 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
           >
             <Plus className="w-4 h-4" />
@@ -107,13 +137,53 @@ export default function KnowledgeBase() {
 
         {showAddModal && (
           <div className="bg-[#111] border border-white/10 rounded-2xl p-6 shadow-xl relative animate-in fade-in slide-in-from-top-4 duration-200">
-            <h3 className="font-semibold text-lg mb-4">Add New Knowledge</h3>
-            <textarea 
-              value={newContent}
-              onChange={(e) => setNewContent(e.target.value)}
-              placeholder="Paste text here (e.g. 'Our store hours are 9 AM to 5 PM Mon-Fri.')"
-              className="w-full h-32 bg-black border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors resize-none mb-4"
-            />
+            <div className="flex gap-4 mb-6 border-b border-white/10 pb-2">
+              <button onClick={() => setUploadType('text')} className={`text-sm font-medium pb-2 border-b-2 transition-colors ${uploadType === 'text' ? 'border-indigo-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>Text</button>
+              <button onClick={() => setUploadType('url')} className={`text-sm font-medium pb-2 border-b-2 transition-colors ${uploadType === 'url' ? 'border-indigo-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>Website URL</button>
+              <button onClick={() => setUploadType('pdf')} className={`text-sm font-medium pb-2 border-b-2 transition-colors ${uploadType === 'pdf' ? 'border-indigo-500 text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>PDF Upload</button>
+            </div>
+
+            {uploadType === 'text' && (
+              <textarea 
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                placeholder="Paste text here (e.g. 'Our store hours are 9 AM to 5 PM Mon-Fri.')"
+                className="w-full h-32 bg-black border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors resize-none mb-4"
+              />
+            )}
+            {uploadType === 'url' && (
+              <input 
+                type="url"
+                value={newContent}
+                onChange={(e) => setNewContent(e.target.value)}
+                placeholder="https://example.com/faq"
+                className="w-full bg-black border border-white/10 rounded-xl p-4 text-sm focus:outline-none focus:border-indigo-500 transition-colors mb-4"
+              />
+            )}
+            {uploadType === 'pdf' && (
+              <div className="w-full h-32 bg-black border border-dashed border-white/20 rounded-xl flex flex-col items-center justify-center mb-4 relative overflow-hidden">
+                <input 
+                  type="file" 
+                  ref={fileInputRef}
+                  accept=".pdf"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+                {file ? (
+                  <div className="text-center">
+                    <FileText className="w-8 h-8 text-indigo-400 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-white">{file.name}</p>
+                    <p className="text-xs text-gray-400 mt-1">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <UploadCloud className="w-8 h-8 text-gray-500 mx-auto mb-2" />
+                    <p className="text-sm font-medium text-gray-300">Click or drag PDF to upload</p>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="flex justify-end gap-3">
               <button 
                 onClick={() => setShowAddModal(false)}
@@ -123,24 +193,24 @@ export default function KnowledgeBase() {
               </button>
               <button 
                 onClick={handleAdd}
-                disabled={!newContent.trim() || adding}
+                disabled={adding || (uploadType === 'pdf' ? !file : !newContent.trim())}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors"
               >
-                {adding ? 'Saving...' : 'Save & Train AI'}
+                {adding ? 'Extracting & Training...' : 'Save & Train AI'}
               </button>
             </div>
           </div>
         )}
 
         <div className="grid md:grid-cols-3 gap-6">
-          <div className="p-6 bg-[#111] border border-white/5 rounded-2xl flex flex-col items-center text-center hover:bg-white/5 transition-colors cursor-pointer group">
+          <div onClick={() => openModal('pdf')} className="p-6 bg-[#111] border border-white/5 rounded-2xl flex flex-col items-center text-center hover:bg-white/5 transition-colors cursor-pointer group">
             <div className="w-12 h-12 rounded-full bg-indigo-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <FileText className="w-6 h-6 text-indigo-400" />
             </div>
             <h3 className="font-semibold mb-1">Text or PDF</h3>
             <p className="text-xs text-gray-400">Upload documents, menus, or paste plain text.</p>
           </div>
-          <div className="p-6 bg-[#111] border border-white/5 rounded-2xl flex flex-col items-center text-center hover:bg-white/5 transition-colors cursor-pointer group">
+          <div onClick={() => openModal('url')} className="p-6 bg-[#111] border border-white/5 rounded-2xl flex flex-col items-center text-center hover:bg-white/5 transition-colors cursor-pointer group">
             <div className="w-12 h-12 rounded-full bg-blue-500/10 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
               <LinkIcon className="w-6 h-6 text-blue-400" />
             </div>
@@ -159,7 +229,7 @@ export default function KnowledgeBase() {
         <div className="bg-[#111] border border-white/5 rounded-2xl overflow-hidden">
           <div className="p-4 border-b border-white/10 bg-[#0A0A0A] flex justify-between items-center">
             <h3 className="font-medium">Active Knowledge Sources</h3>
-            <span className="text-xs text-gray-500">{documents.length} sources synced</span>
+            <span className="text-xs text-gray-500">{documents.length} chunks synced</span>
           </div>
           <div className="divide-y divide-white/5">
             {loading ? (
@@ -170,12 +240,12 @@ export default function KnowledgeBase() {
               <div key={doc.id} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors">
                 <div className="flex items-center gap-4">
                   <div className="w-10 h-10 rounded-lg bg-gray-500/10 text-gray-400 flex items-center justify-center">
-                    <FileText className="w-5 h-5" />
+                    {doc.source_type === 'url' ? <LinkIcon className="w-5 h-5 text-blue-400" /> : <FileText className="w-5 h-5 text-indigo-400" />}
                   </div>
                   <div>
-                    <h4 className="font-medium text-sm line-clamp-1">{doc.content}</h4>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      Added {new Date(doc.created_at).toLocaleDateString()}
+                    <h4 className="font-medium text-sm line-clamp-1">{doc.source_name || doc.source_type}</h4>
+                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-1">
+                      {doc.content.substring(0, 100)}...
                     </p>
                   </div>
                 </div>

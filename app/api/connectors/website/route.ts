@@ -58,8 +58,7 @@ export async function POST(req: Request) {
       conversation = newConversation;
     }
 
-    // 3. Fetch conversation history for AI context BEFORE saving the new user message
-    // (We will append the new user message manually to the context)
+    // 3. Fetch conversation history for AI context
     const { data: previousMessages } = await supabase
       .from('messages')
       .select('content, sender_type')
@@ -92,20 +91,49 @@ export async function POST(req: Request) {
       const key3 = "XU8PtzQaEddN";
       const key4 = "39aV9ZkiYVXU5cbQ";
       const apiKey = process.env.GEMINI_API_KEY || (key1 + key2 + key3 + key4);
-      if (!apiKey) {        console.warn("Missing GEMINI_API_KEY. Falling back to mock response.");
+      if (!apiKey) {
+        console.warn("Missing GEMINI_API_KEY. Falling back to mock response.");
       } else {
-        // Fetch knowledge base for this business to inject into system prompt
-        const { data: knowledgeDocs } = await supabase
-          .from('knowledge_base')
-          .select('content')
-          .eq('business_id', businessId)
-          .limit(20);
-
-        const knowledgeContext = knowledgeDocs && knowledgeDocs.length > 0
-          ? `\n\n---\nBUSINESS KNOWLEDGE BASE:\n${knowledgeDocs.map((d: any) => `- ${d.content}`).join('\n')}\n---\n`
-          : '';
-
         const aiClient = new GoogleGenAI({ apiKey });
+
+        // Retrieve Relevant Knowledge Base Docs using Semantic Search
+        let knowledgeContext = '';
+        try {
+          const queryEmbeddingResponse = await aiClient.models.embedContent({
+            model: 'text-embedding-004',
+            contents: message
+          });
+          
+          const queryEmbedding = queryEmbeddingResponse.embeddings?.[0]?.values;
+          
+          if (queryEmbedding) {
+            // Call Supabase RPC to find matching knowledge chunks
+            const { data: relevantChunks, error: rpcError } = await supabase.rpc('match_knowledge', {
+              query_embedding: `[${queryEmbedding.join(',')}]`,
+              match_threshold: 0.5, // Return matches with at least 50% similarity
+              match_count: 5,       // Max 5 chunks
+              p_business_id: businessId
+            });
+
+            if (rpcError) {
+              console.error("Supabase RPC match_knowledge error:", rpcError);
+              // Fallback to simple selection if RPC is missing
+              const { data: fallbackDocs } = await supabase
+                .from('knowledge_base')
+                .select('content')
+                .eq('business_id', businessId)
+                .limit(5);
+              if (fallbackDocs && fallbackDocs.length > 0) {
+                 knowledgeContext = `\n\n---\nBUSINESS KNOWLEDGE BASE:\n${fallbackDocs.map((d: any) => `- ${d.content}`).join('\n')}\n---\n`;
+              }
+            } else if (relevantChunks && relevantChunks.length > 0) {
+              knowledgeContext = `\n\n---\nBUSINESS KNOWLEDGE BASE (Relevant Chunks):\n${relevantChunks.map((c: any) => `- ${c.content}`).join('\n')}\n---\n`;
+            }
+          }
+        } catch (embedError) {
+           console.error("Embedding generation for user message failed:", embedError);
+        }
+
         const interaction = await aiClient.interactions.create({
             model: "gemini-3.7-flash",
             system_instruction: `You are the helpful AI customer support assistant for this business. Be concise, friendly, and professional. Use the conversation history and business knowledge base below to give accurate, relevant answers.${knowledgeContext}`,
