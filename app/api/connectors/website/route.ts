@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { GoogleGenAI } from '@google/genai';
 
 export async function POST(req: Request) {
   try {
@@ -57,7 +58,23 @@ export async function POST(req: Request) {
       conversation = newConversation;
     }
 
-    // 3. Save User Message
+    // 3. Fetch conversation history for AI context BEFORE saving the new user message
+    // (We will append the new user message manually to the context)
+    const { data: previousMessages } = await supabase
+      .from('messages')
+      .select('content, sender_type')
+      .eq('conversation_id', conversation.id)
+      .order('created_at', { ascending: true });
+
+    let chatContext = "";
+    if (previousMessages && previousMessages.length > 0) {
+      chatContext = previousMessages.map((m: any) => `${m.sender_type === 'customer' ? 'User' : 'AI'}: ${m.content}`).join("\n");
+      chatContext += `\nUser: ${message}\nAI:`;
+    } else {
+      chatContext = `User: ${message}\nAI:`;
+    }
+
+    // 4. Save User Message
     const { error: messageError } = await supabase
       .from('messages')
       .insert({
@@ -66,10 +83,31 @@ export async function POST(req: Request) {
         content: message,
       });
 
-    // 4. Mock AI Response (Fallback because no Gemini Key is available)
-    const aiResponseText = "Hi there! I am the OMNI AI Engine. I've received your message and saved it directly to the Supabase database. A human agent will get back to you shortly!";
+    // 5. Generate Real AI Response
+    let aiResponseText = "Hi there! I am the OMNI AI Engine. I've received your message and saved it directly to the Supabase database. A human agent will get back to you shortly!";
+    
+    try {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey || !apiKey.startsWith('AIzaSy')) {
+        console.warn("Invalid or missing GEMINI_API_KEY. Falling back to mock response.");
+      } else {
+        const aiClient = new GoogleGenAI({ apiKey });
+        const interaction = await aiClient.interactions.create({
+            model: "gemini-3.7-flash",
+            system_instruction: "You are the helpful AI assistant for OMNI AI customer support. Provide concise, friendly, and helpful answers to the website visitor. Use the provided chat history to inform your responses.",
+            input: chatContext,
+        });
+        
+        if (interaction.output_text) {
+          aiResponseText = interaction.output_text;
+        }
+      }
+    } catch (aiError) {
+      console.error('Error generating AI response:', aiError);
+      // Fallback remains the mock string if Gemini fails
+    }
 
-    // 5. Save AI Message
+    // 6. Save AI Message
     await supabase
       .from('messages')
       .insert({
